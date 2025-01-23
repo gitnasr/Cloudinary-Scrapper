@@ -3,7 +3,6 @@ import cloudinary,os, requests, logging
 from dotenv import load_dotenv
 import cloudinary.api
 
-from download import MultithreadedDownloader
 class CScrapper:
     def __init__(self) -> None:
         load_dotenv()
