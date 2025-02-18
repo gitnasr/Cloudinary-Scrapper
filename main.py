@@ -1,70 +1,106 @@
+import os
+import re
+from datetime import datetime, timezone
 
-import cloudinary,os, requests, logging
-from dotenv import load_dotenv
+import cloudinary
 import cloudinary.api
+import requests
+from apscheduler.schedulers.blocking import BlockingScheduler
+from dotenv import load_dotenv
+
+load_dotenv(".env")
+
 
 class CScrapper:
     def __init__(self) -> None:
-        load_dotenv()
+        self.cloudName = os.getenv("CLOUD_NAME")
+        self.scheduler = BlockingScheduler()
         try:
             self.cloud = cloudinary.config(
-                cloud_name=os.getenv("CLOUD_NAME"),
+                cloud_name=self.cloudName,
                 api_key=os.getenv("API_KEY"),
                 api_secret=os.getenv("API_SECRET"),
             )
-            self.all_resources = []  # Store resources with metadata
+            self.all_resources = []
+            self.next_run = {
+                "last_cursor": None,
+                "run_at": None,
+                "page": 1
+            }
         except KeyError as e:
             raise ValueError("Missing environment variable: {}".format(e))
 
-    def get_resources(self):
-        print("Getting resources")
-        max_results = 50  # Adjust as needed
-        cursor = None
-        page =1
+    def extract_datetime(self, error_message):
+        match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC", error_message)
+        if match:
+            datetime_str = match.group(1)
+            execution_time = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            return execution_time
+        return None
+
+    def schedule_next_run(self):
+        if self.next_run["run_at"]:
+            print(f"⏳ Rate limit exceeded. Retrying at {self.next_run['run_at']}...")
+            self.scheduler.add_job(self.get_resources, 'date', run_date=self.next_run["run_at"])
+
+    def get_resources(self, cursor=None, page=1):
+        print("🔄 Fetching resources...")
+        max_results = 50
+        cursor = self.next_run["last_cursor"] or cursor
+        page = self.next_run["page"] or page
+
         while True:
             try:
                 resources = cloudinary.api.resources(max_results=max_results, next_cursor=cursor)
             except Exception as e:
-                print("Error fetching resources:", e)
-                break
+                if "Rate Limit Exceeded" in str(e):
+                    execution_time = self.extract_datetime(str(e))
+                    if execution_time:
+                        self.next_run["run_at"] = execution_time
+                        self.next_run["last_cursor"] = cursor
+                        self.next_run["page"] = page
+                        self.schedule_next_run()
+                    return  
 
-            for resource in resources["resources"]:
-                self.all_resources.append(resource)
-
+            self.all_resources.extend(resources["resources"])
             cursor = resources.get("next_cursor")
-            print(f"Page {page} fetched")
+            print(f"✅ Page {page} - {len(self.all_resources)} resources fetched")
             page += 1
+
             if not cursor:
                 break
 
-        # Example of storing URLs in a dictionary
-        self.direct_urls = {resource["public_id"]: resource["secure_url"] for resource in self.all_resources}
-    
+        self.download_resource()
+
     def download_resource(self):
+        print("📥 Downloading resources...")
         chunk_size = 1024
-        for publicId in self.direct_urls:
+        download_path = os.path.join("downloads", self.cloudName)
+        os.makedirs(download_path, exist_ok=True)
+
+        for resource in self.all_resources:
+            public_id = resource["public_id"]
+            url = resource["secure_url"]
+            file_path = os.path.join(download_path, f"{public_id}.jpg")
 
             try:
-                response = requests.get(self.direct_urls[publicId], stream=True)
+                response = requests.get(url, stream=True)
                 response.raise_for_status()
 
-                file_size = int(response.headers.get('Content-Length', 0))
-                downloaded = 0
-
-                with open(os.path.join("C1Test",publicId ), 'wb') as f:
+                with open(file_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size):
-                        downloaded += len(chunk)
                         f.write(chunk)
-                        logging.info(f"Downloading {publicId} ({downloaded}/{file_size} bytes)")
+
+                print(f"✅ Downloaded {public_id}")
 
             except requests.exceptions.RequestException as e:
-                # print(e)
-                logging.error(f"Error downloading {publicId}: {e}")
-            # logging.error(f"Error downloading {url}: {e}")
+                print(f"❌ Error downloading {public_id}: {e}")
+
+    def run(self):
+        self.get_resources()
+        self.scheduler.start()
 
 
-        
 if __name__ == "__main__":
     app = CScrapper()
-    app.get_resources()
-    app.download_resource()
+    app.run()
