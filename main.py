@@ -1,14 +1,19 @@
 
-import cloudinary,os, requests, logging
-from dotenv import load_dotenv
+import os
+
+import cloudinary
 import cloudinary.api
+import requests
+from dotenv import load_dotenv
+
+load_dotenv(".env")
 
 class CScrapper:
     def __init__(self) -> None:
-        load_dotenv()
+        self.cloudName = os.getenv("CLOUD_NAME")
         try:
             self.cloud = cloudinary.config(
-                cloud_name=os.getenv("CLOUD_NAME"),
+                cloud_name=self.cloudName,
                 api_key=os.getenv("API_KEY"),
                 api_secret=os.getenv("API_SECRET"),
             )
@@ -17,7 +22,7 @@ class CScrapper:
             raise ValueError("Missing environment variable: {}".format(e))
 
     def get_resources(self):
-        print("Getting resources")
+        print("Fetching resources...")
         max_results = 50  # Adjust as needed
         cursor = None
         page =1
@@ -32,12 +37,12 @@ class CScrapper:
                 self.all_resources.append(resource)
 
             cursor = resources.get("next_cursor")
-            print(f"Page {page} fetched")
+            print(f"Page {page} - {len(self.all_resources)} resources fetched")
             page += 1
             if not cursor:
                 break
 
-        # Example of storing URLs in a dictionary
+
         self.direct_urls = {resource["public_id"]: resource["secure_url"] for resource in self.all_resources}
     
     def download_resource(self):
@@ -50,17 +55,16 @@ class CScrapper:
 
                 file_size = int(response.headers.get('Content-Length', 0))
                 downloaded = 0
-
-                with open(os.path.join("C1Test",publicId ), 'wb') as f:
+                dir_path = os.path.join("downloads", os.path.dirname(self.cloudName), publicId)
+                os.makedirs(os.path.dirname(dir_path), exist_ok=True)
+                with open(dir_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size):
                         downloaded += len(chunk)
                         f.write(chunk)
-                        logging.info(f"Downloading {publicId} ({downloaded}/{file_size} bytes)")
+                        print(f"Downloading {publicId} ({downloaded}/{file_size} bytes)")
 
             except requests.exceptions.RequestException as e:
-                # print(e)
-                logging.error(f"Error downloading {publicId}: {e}")
-            # logging.error(f"Error downloading {url}: {e}")
+                print(f"Error downloading {publicId}: {e}")
 
 
         
