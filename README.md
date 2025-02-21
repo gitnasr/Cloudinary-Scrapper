@@ -61,8 +61,8 @@ Before you begin, ensure you have met the following requirements:
 1.  **Clone the repository:**
 
     ```bash
-    git clone <repository_url>  # Replace <repository_url> with your repository URL
-    cd <your-repo-name>  # Replace `<your-repo-name>` with the name of your repository on your local system
+    git clone https://github.com/gitnasr/CloudinaryScrapper 
+    cd CloudinaryScrapper 
     ```
 2.  **Create a virtual environment:**
 
