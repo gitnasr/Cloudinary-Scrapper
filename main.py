@@ -7,6 +7,7 @@ import cloudinary.api
 import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
+from tinydb import Query, TinyDB
 
 load_dotenv(".env")
 
@@ -27,6 +28,7 @@ class CScrapper:
                 "run_at": None,
                 "page": 1
             }
+            self.TinyDB = TinyDB("db.json")
         except KeyError as e:
             raise ValueError("Missing environment variable: {}".format(e))
 
@@ -66,7 +68,23 @@ class CScrapper:
             cursor = resources.get("next_cursor")
             print(f"✅ Page {page} - {len(self.all_resources)} resources fetched")
             page += 1
-
+            try:
+                resources_table = self.db.table('resources')
+                pagination_table = self.db.table('pagination')
+               
+               # Store resources with timestamp
+                resources_table.insert_multiple([
+                    {**resource, 'fetched_at': datetime.now().isoformat()}
+                    for resource in resources["resources"]
+                ])
+                
+                # Update pagination state
+                pagination_table.upsert(
+                    {'cursor': cursor, 'page': page, 'updated_at': datetime.now().isoformat()},
+                    Query().page.exists()  # Update existing record
+                )
+            except Exception as e:
+                print(f"❌ Failed to store data: {e}")
             if not cursor:
                 break
 
@@ -79,9 +97,14 @@ class CScrapper:
         os.makedirs(download_path, exist_ok=True)
 
         for resource in self.all_resources:
-            public_id = resource["public_id"]
             url = resource["secure_url"]
-            file_path = os.path.join(download_path, f"{public_id}.jpg")
+            folder = os.path.normpath(resource["folder"])
+            if folder.startswith('..') or folder.startswith('/'):
+                 raise ValueError(f"Invalid folder path: {folder}")
+            
+            file_name = f"{resource['asset_id']}.{resource['format']}"
+            file_path = os.path.join(download_path, folder, file_name)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
             try:
                 response = requests.get(url, stream=True)
@@ -91,15 +114,17 @@ class CScrapper:
                     for chunk in response.iter_content(chunk_size):
                         f.write(chunk)
 
-                print(f"✅ Downloaded {public_id}")
+                print(f"✅ Downloaded {file_name}")
 
-            except requests.exceptions.RequestException as e:
-                print(f"❌ Error downloading {public_id}: {e}")
-
+            except requests.RequestException as e:
+                print(f"❌ Network error downloading {file_name}: {e}")
+            except IOError as e:
+                print(f"❌ Error saving {file_name}: {e}")
+            except Exception as e:
+                print(f"❌ Unexpected error downloading {file_name}: {type(e).__name__}: {e}")
     def run(self):
         self.get_resources()
         self.scheduler.start()
-
 
 if __name__ == "__main__":
     app = CScrapper()
