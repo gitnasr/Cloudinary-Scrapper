@@ -7,6 +7,7 @@ import cloudinary.api
 import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
+from tinydb import Query, TinyDB
 
 load_dotenv(".env")
 
@@ -27,6 +28,7 @@ class CScrapper:
                 "run_at": None,
                 "page": 1
             }
+            self.TinyDB = TinyDB("db.json")
         except KeyError as e:
             raise ValueError("Missing environment variable: {}".format(e))
 
@@ -66,7 +68,8 @@ class CScrapper:
             cursor = resources.get("next_cursor")
             print(f"✅ Page {page} - {len(self.all_resources)} resources fetched")
             page += 1
-
+            self.TinyDB.insert_multiple(resources["resources"])
+            self.TinyDB.insert({"cursor": cursor, "page": page})
             if not cursor:
                 break
 
@@ -79,9 +82,11 @@ class CScrapper:
         os.makedirs(download_path, exist_ok=True)
 
         for resource in self.all_resources:
-            public_id = resource["public_id"]
             url = resource["secure_url"]
-            file_path = os.path.join(download_path, f"{public_id}.jpg")
+            file_path = os.path.join(download_path,self.cloudName, resource["folder"])
+            os.makedirs(file_path, exist_ok=True)
+            fileName = resource['asset_id'] + "." + resource['format']
+            file_path = os.path.join(file_path, fileName)
 
             try:
                 response = requests.get(url, stream=True)
@@ -91,15 +96,13 @@ class CScrapper:
                     for chunk in response.iter_content(chunk_size):
                         f.write(chunk)
 
-                print(f"✅ Downloaded {public_id}")
+                print(f"✅ Downloaded {fileName}")
 
-            except requests.exceptions.RequestException as e:
-                print(f"❌ Error downloading {public_id}: {e}")
-
+            except Exception as e:
+                print(f"❌ Failed to download {fileName} as {e}")
     def run(self):
         self.get_resources()
         self.scheduler.start()
-
 
 if __name__ == "__main__":
     app = CScrapper()
