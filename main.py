@@ -28,7 +28,7 @@ class CScrapper:
                 "run_at": None,
                 "page": 1
             }
-            self.TinyDB = TinyDB("db.json")
+            self.db = TinyDB("db.json")
         except KeyError as e:
             raise ValueError("Missing environment variable: {}".format(e))
 
