@@ -68,8 +68,23 @@ class CScrapper:
             cursor = resources.get("next_cursor")
             print(f"✅ Page {page} - {len(self.all_resources)} resources fetched")
             page += 1
-            self.TinyDB.insert_multiple(resources["resources"])
-            self.TinyDB.insert({"cursor": cursor, "page": page})
+            try:
+                resources_table = self.db.table('resources')
+                pagination_table = self.db.table('pagination')
+               
+               # Store resources with timestamp
+                resources_table.insert_multiple([
+                    {**resource, 'fetched_at': datetime.now().isoformat()}
+                    for resource in resources["resources"]
+                ])
+                
+                # Update pagination state
+                pagination_table.upsert(
+                    {'cursor': cursor, 'page': page, 'updated_at': datetime.now().isoformat()},
+                    Query().page.exists()  # Update existing record
+                )
+            except Exception as e:
+                print(f"❌ Failed to store data: {e}")
             if not cursor:
                 break
 
@@ -83,10 +98,13 @@ class CScrapper:
 
         for resource in self.all_resources:
             url = resource["secure_url"]
-            file_path = os.path.join(download_path,self.cloudName, resource["folder"])
-            os.makedirs(file_path, exist_ok=True)
-            fileName = resource['asset_id'] + "." + resource['format']
-            file_path = os.path.join(file_path, fileName)
+            folder = os.path.normpath(resource["folder"])
+            if folder.startswith('..') or folder.startswith('/'):
+                 raise ValueError(f"Invalid folder path: {folder}")
+            
+            file_name = f"{resource['asset_id']}.{resource['format']}"
+            file_path = os.path.join(download_path, folder, file_name)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
             try:
                 response = requests.get(url, stream=True)
@@ -96,10 +114,14 @@ class CScrapper:
                     for chunk in response.iter_content(chunk_size):
                         f.write(chunk)
 
-                print(f"✅ Downloaded {fileName}")
+                print(f"✅ Downloaded {file_name}")
 
+            except requests.RequestException as e:
+                print(f"❌ Network error downloading {file_name}: {e}")
+            except IOError as e:
+                print(f"❌ Error saving {file_name}: {e}")
             except Exception as e:
-                print(f"❌ Failed to download {fileName} as {e}")
+                print(f"❌ Unexpected error downloading {file_name}: {type(e).__name__}: {e}")
     def run(self):
         self.get_resources()
         self.scheduler.start()
